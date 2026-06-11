@@ -70,6 +70,12 @@ export function clearSupports(group) {
     }
 }
 
+// When true, supports render opaque (no transparency). Transparent materials
+// force per-frame depth sorting + overdraw, which is slow for dense support
+// sets (e.g. STLCreator on high-res prints). Default keeps the semi-transparent
+// look (engine + runciter) so you can see the model through the supports.
+let _opaqueSupports = false;
+
 /** Set the quality preset for all subsequent render calls. */
 export function setQuality(q) { _quality = q; }
 export function getQuality() { return _quality; }
@@ -86,6 +92,8 @@ export function getQuality() { return _quality; }
  * @param {number[]} [t.treePalette]
  * @param {number} [t.tipReserveMm]   tip zone height (default 3.0)
  * @param {number} [t.erTipReserveMm] easy-remove tip zone (default 1.5)
+ * @param {boolean} [t.opaque] render supports opaque (no transparency) — faster
+ *   viewport for dense support sets. Default false (semi-transparent).
  */
 export function setTheme(t = {}) {
     if (t.supportTypeColors) {
@@ -100,6 +108,7 @@ export function setTheme(t = {}) {
     if (t.treePalette) TREE_PALETTE = t.treePalette;
     if (t.tipReserveMm != null) TIP_RESERVE_MM = t.tipReserveMm;
     if (t.erTipReserveMm != null) ER_TIP_RESERVE_MM = t.erTipReserveMm;
+    if (t.opaque != null) _opaqueSupports = t.opaque;
 }
 
 export function renderSupports(group, supports, columns, braces, raft, phase = 'coverage') {
@@ -136,6 +145,19 @@ export function renderSupports(group, supports, columns, braces, raft, phase = '
         renderRaftLattice(group, columns);
     } else if (raft && basePositions.length > 0) {
         renderRaftLattice(group, null, basePositions);
+    }
+
+    // Opaque mode (setTheme({opaque:true})): strip transparency from every
+    // support material so the GPU skips per-frame depth sorting + overdraw.
+    if (_opaqueSupports) {
+        group.traverse((o) => {
+            const m = o.material;
+            if (!m) return;
+            (Array.isArray(m) ? m : [m]).forEach((mm) => {
+                mm.transparent = false;
+                mm.opacity = 1;
+            });
+        });
     }
 }
 
