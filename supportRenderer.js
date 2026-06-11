@@ -1,4 +1,5 @@
 import * as THREE from 'three';
+import { mergeGeometries } from 'three/addons/utils/BufferGeometryUtils.js';
 import {
     zu,
     resolveQuality,
@@ -76,9 +77,23 @@ export function clearSupports(group) {
 // look (engine + runciter) so you can see the model through the supports.
 let _opaqueSupports = false;
 
+// When true (default), all individual support meshes are merged by material at
+// the end of renderSupports → a handful of draw calls instead of hundreds (a
+// scene can have hundreds of supports). Set to false for the STLBlade desktop
+// DEBUG viewer, which raycasts individual meshes (userData.supportId) to select
+// supports — merging would collapse them and break selection.
+let _mergeSupports = true;
+
 /** Set the quality preset for all subsequent render calls. */
 export function setQuality(q) { _quality = q; }
 export function getQuality() { return _quality; }
+
+/**
+ * Toggle draw-call merging. true (default) = merge meshes by material (fast,
+ * not individually selectable). false = keep individual meshes with userData
+ * for click-to-select (STLBlade desktop debug).
+ */
+export function setMergeSupports(v) { _mergeSupports = !!v; }
 
 /**
  * Per-app theming. Geometry/logic is shared; colors + tip length are per-app.
@@ -158,6 +173,58 @@ export function renderSupports(group, supports, columns, braces, raft, phase = '
                 mm.opacity = 1;
             });
         });
+    }
+
+    // Merge by material → few draw calls (default). Skipped in debug mode so
+    // individual meshes stay selectable. Must run AFTER opaque so the merged
+    // meshes inherit the (mutated) material refs.
+    if (_mergeSupports) {
+        _mergeSupportMeshes(group);
+    }
+}
+
+/**
+ * Merge all individual support meshes by material into one mesh per material
+ * (fewer draw calls). Skips InstancedMesh / multi-material meshes. Bakes each
+ * mesh's transform into a cloned geometry, strips to position+normal so every
+ * geometry in a bucket shares the same attribute set (mergeGeometries requires
+ * that), and groups by material reference. Falls back to keeping the originals
+ * if a bucket fails to merge.
+ */
+function _mergeSupportMeshes(group) {
+    // Group by material *appearance* (not instance ref) so meshes that look
+    // identical but come from separate render calls collapse into one draw call.
+    const byKey = new Map(); // key -> { mat, meshes: [], geos: [] }
+    const matKey = (m) =>
+        `${m.color?.getHex?.() ?? 0}|${m.opacity}|${m.transparent}|` +
+        `${m.emissive?.getHex?.() ?? 0}|${m.type}`;
+    for (const child of group.children) {
+        if (!child.isMesh || child.isInstancedMesh) continue;
+        if (!child.geometry || !child.material || Array.isArray(child.material)) continue;
+        const key = matKey(child.material);
+        let entry = byKey.get(key);
+        if (!entry) { entry = { mat: child.material, meshes: [], geos: [] }; byKey.set(key, entry); }
+        child.updateMatrix();
+        let g = child.geometry.clone();
+        g.applyMatrix4(child.matrix);
+        if (g.index) g = g.toNonIndexed();
+        for (const name of Object.keys(g.attributes)) {
+            if (name !== 'position' && name !== 'normal') g.deleteAttribute(name);
+        }
+        if (!g.attributes.normal) g.computeVertexNormals();
+        entry.meshes.push(child);
+        entry.geos.push(g);
+    }
+    for (const entry of byKey.values()) {
+        if (entry.meshes.length < 2) { entry.geos.forEach(g => g.dispose()); continue; }
+        let merged = null;
+        try { merged = mergeGeometries(entry.geos, false); } catch { merged = null; }
+        entry.geos.forEach(g => g.dispose());
+        if (!merged) continue; // merge failed → keep originals
+        for (const m of entry.meshes) { group.remove(m); m.geometry.dispose(); }
+        const mesh = new THREE.Mesh(merged, entry.mat);
+        mesh.userData.type = 'merged-supports';
+        group.add(mesh);
     }
 }
 

@@ -31,6 +31,7 @@ export {
     setQuality,
     getQuality,
     setTheme,
+    setMergeSupports,
     zu,
 } from './supportRenderer.js';
 export { parseStlToArrays } from './parseStl.mjs';
