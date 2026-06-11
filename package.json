@@ -1,0 +1,7 @@
+{
+  "name": "stlblade-renderer",
+  "private": true,
+  "type": "module",
+  "description": "Node-side replica of STLBlade's frontend support renderer. Same code path as the browser viewer; used by Runciter to reconstruct supported STLs from STLBlade schemas.",
+  "main": "./index.ts"
+}
