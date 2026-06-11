@@ -11,7 +11,11 @@ import {
     buildBraceGeo,
 } from './supportGeometry.js';
 
-const SUPPORT_TYPE_COLORS = {
+// ── Theme (per-app config via setTheme) ──────────────────────────────────
+// Colors + tip-reserve are per-app: STLCreator uses a pink theme, the engine
+// and runciter use the typed palette below. Geometry/logic is shared. These
+// are `let` so setTheme() can override them; references read them at call time.
+let SUPPORT_TYPE_COLORS = {
     stub:   0xaa88dd,  // purple — Phase 2 only
     mini:   0xddaa44,  // yellow — Phase 2 only
     light:  0x00ccaa,  // teal
@@ -19,30 +23,30 @@ const SUPPORT_TYPE_COLORS = {
     heavy:  0xff6644,  // orange-red
 };
 
-const BRACE_COLOR = 0x4488ff;
-const RAFT_COLOR = 0x6c63ff;
-const TIP_COLOR = 0xffffff;
-const ANCHOR_COLOR = 0xff8800;  // orange — model-to-model anchors
-const INTERSECT_COLOR = 0xff0000;  // red — last-resort columns that intersect mesh
-const PILLAR_MERGE_COLOR = 0x44dd88;  // lime green — pillar merge strategy
+let BRACE_COLOR = 0x4488ff;
+let RAFT_COLOR = 0x6c63ff;
+let TIP_COLOR = 0xffffff;
+let ANCHOR_COLOR = 0xff8800;  // orange — model-to-model anchors
+let INTERSECT_COLOR = 0xff0000;  // red — last-resort columns that intersect mesh
+let PILLAR_MERGE_COLOR = 0x44dd88;  // lime green — pillar merge strategy
 
 // Phase 2 tree palette (10 colors): trunk gets bright variant, branches get dim
-const TREE_PALETTE = [
+let TREE_PALETTE = [
     0x44bbff, 0xff7744, 0x44dd88, 0xdd44aa, 0xaadd44,
     0xff44dd, 0x44ffdd, 0xddaa44, 0x8844ff, 0xff4488,
 ];
 const TREE_TRUNK_BRIGHTNESS = 1.0;
 const TREE_BRANCH_BRIGHTNESS = 0.65;
 
-// Preset shaft/tip dimensions (must match presets.py)
+// Preset shaft/tip dimensions (must match presets.py) — geometry, NOT theme.
 const PRESET_SHAFT_D = { stub: 0.25, mini: 0.40, light: 1.00, medium: 1.30, heavy: 2.50 };
 const PRESET_TIP_D = { stub: 0.10, mini: 0.12, light: 0.20, medium: 0.40, heavy: 0.60 };
-const TIP_RESERVE_MM = 3.0;  // Fixed tip zone height for all column types
+let TIP_RESERVE_MM = 3.0;  // Tip zone height — themeable (default 3.0; engine may set 4.5)
 
-// Easy Remove: much thinner supports (must match easy_remove/config.py)
+// Easy Remove: much thinner supports (must match easy_remove/config.py) — geometry.
 const ER_SHAFT_D = { light: 0.30, medium: 0.45 };
 const ER_TIP_D = { light: 0.15, medium: 0.20 };
-const ER_TIP_RESERVE_MM = 1.5;
+let ER_TIP_RESERVE_MM = 1.5;
 
 // zu() is imported from supportGeometry.js and re-exported
 export { zu, QUALITY_PRESETS } from './supportGeometry.js';
@@ -69,6 +73,34 @@ export function clearSupports(group) {
 /** Set the quality preset for all subsequent render calls. */
 export function setQuality(q) { _quality = q; }
 export function getQuality() { return _quality; }
+
+/**
+ * Per-app theming. Geometry/logic is shared; colors + tip length are per-app.
+ * Call once at startup (e.g. STLCreator passes its pink theme). Any field
+ * omitted keeps the default (typed palette / 3.0mm tip).
+ *
+ * @param {object} t
+ * @param {object} [t.supportTypeColors]  partial { stub, mini, light, medium, heavy }
+ * @param {number} [t.braceColor] [t.raftColor] [t.tipColor] [t.anchorColor]
+ * @param {number} [t.intersectColor] [t.pillarMergeColor]
+ * @param {number[]} [t.treePalette]
+ * @param {number} [t.tipReserveMm]   tip zone height (default 3.0)
+ * @param {number} [t.erTipReserveMm] easy-remove tip zone (default 1.5)
+ */
+export function setTheme(t = {}) {
+    if (t.supportTypeColors) {
+        SUPPORT_TYPE_COLORS = { ...SUPPORT_TYPE_COLORS, ...t.supportTypeColors };
+    }
+    if (t.braceColor != null) BRACE_COLOR = t.braceColor;
+    if (t.raftColor != null) RAFT_COLOR = t.raftColor;
+    if (t.tipColor != null) TIP_COLOR = t.tipColor;
+    if (t.anchorColor != null) ANCHOR_COLOR = t.anchorColor;
+    if (t.intersectColor != null) INTERSECT_COLOR = t.intersectColor;
+    if (t.pillarMergeColor != null) PILLAR_MERGE_COLOR = t.pillarMergeColor;
+    if (t.treePalette) TREE_PALETTE = t.treePalette;
+    if (t.tipReserveMm != null) TIP_RESERVE_MM = t.tipReserveMm;
+    if (t.erTipReserveMm != null) ER_TIP_RESERVE_MM = t.erTipReserveMm;
+}
 
 export function renderSupports(group, supports, columns, braces, raft, phase = 'coverage') {
     clearSupports(group);

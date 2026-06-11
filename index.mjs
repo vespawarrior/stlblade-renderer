@@ -23,6 +23,18 @@ import * as THREE from 'three';
 import { renderSupports, setQuality } from './supportRenderer.js';
 import { buildMergedSTLBuffer } from './meshBuilder.js';
 
+// Re-export the renderer API so consumers configure theme/quality via the
+// package entry point.
+export {
+    renderSupports,
+    clearSupports,
+    setQuality,
+    getQuality,
+    setTheme,
+    zu,
+} from './supportRenderer.js';
+export { parseStlToArrays } from './parseStl.mjs';
+
 /**
  * Render a placement schema into a watertight STL.
  *
