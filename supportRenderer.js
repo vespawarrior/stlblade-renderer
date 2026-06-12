@@ -30,6 +30,10 @@ let TIP_COLOR = 0xffffff;
 let ANCHOR_COLOR = 0xff8800;  // orange — model-to-model anchors
 let INTERSECT_COLOR = 0xff0000;  // red — last-resort columns that intersect mesh
 let PILLAR_MERGE_COLOR = 0x44dd88;  // lime green — pillar merge strategy
+let OVERHANG_COLOR = 0xff8800;  // orange — overhang columns (themeable)
+let STEEP_COLOR = 0xff00ff;     // magenta — steep-approach columns (themeable)
+let BRANCH_COLOR = 0xff00ff;    // magenta — Phase 2 tree branches (themeable)
+let TIP_WARNING_COLOR = 0xffaa00;  // amber — tip-near-surface warning (themeable)
 
 // Phase 2 tree palette (10 colors): trunk gets bright variant, branches get dim
 let TREE_PALETTE = [
@@ -104,6 +108,7 @@ export function setMergeSupports(v) { _mergeSupports = !!v; }
  * @param {object} [t.supportTypeColors]  partial { stub, mini, light, medium, heavy }
  * @param {number} [t.braceColor] [t.raftColor] [t.tipColor] [t.anchorColor]
  * @param {number} [t.intersectColor] [t.pillarMergeColor]
+ * @param {number} [t.overhangColor] [t.steepColor] [t.branchColor]
  * @param {number[]} [t.treePalette]
  * @param {number} [t.tipReserveMm]   tip zone height (default 3.0)
  * @param {number} [t.erTipReserveMm] easy-remove tip zone (default 1.5)
@@ -120,6 +125,10 @@ export function setTheme(t = {}) {
     if (t.anchorColor != null) ANCHOR_COLOR = t.anchorColor;
     if (t.intersectColor != null) INTERSECT_COLOR = t.intersectColor;
     if (t.pillarMergeColor != null) PILLAR_MERGE_COLOR = t.pillarMergeColor;
+    if (t.overhangColor != null) OVERHANG_COLOR = t.overhangColor;
+    if (t.steepColor != null) STEEP_COLOR = t.steepColor;
+    if (t.branchColor != null) BRANCH_COLOR = t.branchColor;
+    if (t.tipWarningColor != null) TIP_WARNING_COLOR = t.tipWarningColor;
     if (t.treePalette) TREE_PALETTE = t.treePalette;
     if (t.tipReserveMm != null) TIP_RESERVE_MM = t.tipReserveMm;
     if (t.erTipReserveMm != null) ER_TIP_RESERVE_MM = t.erTipReserveMm;
@@ -624,7 +633,7 @@ function renderColumns(group, columns, supports, isER = false) {
             steepByType[st].push(col);
         });
         for (const [st, cols] of Object.entries(steepByType)) {
-            renderColumnsIndividual(group, cols, 0xff00ff, st, isER);
+            renderColumnsIndividual(group, cols, STEEP_COLOR, st, isER);
         }
     }
     const nonSteep = legacyColumns.filter(c => !c.steep_approach);
@@ -649,8 +658,7 @@ function renderColumns(group, columns, supports, isER = false) {
         }
     }
 
-    // Separate overhang columns (render in orange) from island columns
-    const OVERHANG_COLOR = 0xff8800;
+    // Separate overhang columns from island columns (OVERHANG_COLOR is themeable)
     const overhangCols = nonMerge.filter(c => sourceById[c.support_id] === 'overhang');
     const islandCols = nonMerge.filter(c => sourceById[c.support_id] !== 'overhang');
     if (overhangCols.length > 0) {
@@ -730,7 +738,7 @@ function renderColumns(group, columns, supports, isER = false) {
                     branchesByType[st].push(br);
                 });
                 for (const [st, brs] of Object.entries(branchesByType)) {
-                    renderColumnsIndividual(group, brs, 0xFF00FF, st, isER);
+                    renderColumnsIndividual(group, brs, BRANCH_COLOR, st, isER);
                 }
                 // Knee spheres at intermediate waypoints of tiered branches
                 renderKneeSpheres(group, branches, baseColor);
@@ -858,7 +866,7 @@ function renderTips(group, supports, columns, isER = false) {
         emissive: 0x330000,
     });
     const tipMatWarning = new THREE.MeshPhongMaterial({
-        color: 0xffaa00,
+        color: TIP_WARNING_COLOR,
         emissive: 0x332200,
     });
 
