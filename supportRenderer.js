@@ -962,6 +962,18 @@ function renderTips(group, supports, columns, isER = false) {
         }
 
         capsule.userData.type = 'tips';
+        // Identity for the debug tooltip — orphan-looking tip stubs were
+        // untraceable without this (defect: orange cones with no ID).
+        capsule.userData.supportId = sp.id;
+        capsule.userData.source = sp.source;
+        capsule.userData.supportType = sp.support_type;
+        if (col) {
+            capsule.userData.strategy = col.strategy;
+            capsule.userData.tipWarning = !!isTipWarning;
+            capsule.userData.intersects = !!isIntersecting;
+        } else {
+            capsule.userData.noColumn = true;
+        }
         group.add(capsule);
     });
 }
