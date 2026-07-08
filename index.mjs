@@ -42,6 +42,11 @@ export { parseStlToArrays } from './parseStl.mjs';
  * @param {Float32Array} vertices  Original mesh vertices (flat XYZ, Z-up, pre-orientation).
  * @param {Uint32Array} faces      Original mesh faces (flat triangle indices).
  * @param {object} schema          Schema returned by STLBlade /support + /support/optimize.
+ *   May carry `upright_matrix` (4x4 row-major, Z-up frame): the engine's
+ *   auto-upright correction from /analyze. When present it is applied to
+ *   the source vertices BEFORE orientation — the engine computed the
+ *   supports on the corrected (standing) mesh, so the source must get the
+ *   same transform or model and supports land in different places.
  * @param {object} [opts]          Render quality knobs.
  * @param {'low'|'medium'|'high'} [opts.quality='medium']
  * @param {'y'|'z'} [opts.upAxis='y']
@@ -69,6 +74,18 @@ export function renderSchemaToSTL(vertices, faces, schema, opts = {}) {
   const geometry = new THREE.BufferGeometry();
   geometry.setAttribute('position', new THREE.BufferAttribute(vertices, 3));
   geometry.setIndex(new THREE.BufferAttribute(faces, 1));
+
+  // ── 1b. Auto-upright correction (Z-up frame, before orientation) ──
+  // Matrix4.set() takes row-major — same layout the engine emits.
+  if (schema.upright_matrix) {
+    const m = schema.upright_matrix;
+    geometry.applyMatrix4(new THREE.Matrix4().set(
+      m[0][0], m[0][1], m[0][2], m[0][3],
+      m[1][0], m[1][1], m[1][2], m[1][3],
+      m[2][0], m[2][1], m[2][2], m[2][3],
+      m[3][0], m[3][1], m[3][2], m[3][3],
+    ));
+  }
 
   // ── 2. Apply orientation in Z-up (matches viewer.loadSTLOriented) ──
   const rxRad = THREE.MathUtils.degToRad(schema.orientation.rx);

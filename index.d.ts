@@ -18,6 +18,12 @@ export interface StlBladeSchema {
   raft?: Record<string, unknown> | null;
   /** "coverage" | "optimized" | "easy_remove" | "easy_remove_optimized". */
   phase?: string;
+  /**
+   * Auto-upright correction from the engine's /analyze (UprightInfo.matrix):
+   * 4x4 row-major, Z-up frame. Applied to the source vertices BEFORE the
+   * orientation — the supports were computed on the corrected mesh.
+   */
+  upright_matrix?: number[][] | null;
 }
 
 export interface RenderSchemaOptions {
