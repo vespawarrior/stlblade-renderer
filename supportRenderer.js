@@ -389,12 +389,21 @@ function renderColumnsIndividual(group, cols, color, stype, isER = false) {
         // path[-1]=contact (model surface) → thin
         if (col.is_anchor) {
             const pts = path.map(p => zu(p[0], p[1], p[2]));
+            // Host-snapping applies ONLY to pillar_merge anchors — they
+            // exit a host column and the snap glues the exit point onto
+            // the rendered tube. Model-to-model anchors ('anchor' /
+            // 'anchor_bezier') have BOTH endpoints on the model surface:
+            // snapping one of them teleported it up to 25 mm (the slop)
+            // onto an unrelated pillar, drawing long cones that end in
+            // mid-air or cross geometry the real strut never touches.
+            const isPillarMerge = col.strategy === 'pillar_merge'
+                || col.target_pillar_id != null;
             // STLBlade's documented convention is path[0]=column-side,
             // path[-1]=model-contact, but ~16% of anchors come out
             // flipped (model end at index 0). Pick whichever endpoint
             // sits closer to a non-anchor column segment and snap THAT
             // one — the other end stays put (it's the model contact).
-            if (pts.length >= 2) {
+            if (isPillarMerge && pts.length >= 2) {
                 const hitStart = nearestHostHit(pts[0]);
                 const hitEnd = nearestHostHit(pts[pts.length - 1]);
                 const dStart = hitStart ? hitStart.dist2 : Infinity;
