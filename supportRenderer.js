@@ -789,7 +789,11 @@ function renderBaseFeet(group, columns, typeById, isER = false) {
 
         const taper = new THREE.Mesh(foot.taperGeo, footMat);
         taper.position.copy(base);
-        taper.position.y += foot.padHeight + foot.taperHeight / 2;
+        // Sink the taper 0.1mm INTO the pad: butt-joining them leaves two
+        // coincident coplanar cap discs that slicer imports weld into
+        // non-manifold junk (Lychee repair flag). Overlap is invisible
+        // (0.1mm) and each shell stays independently closed.
+        taper.position.y += foot.padHeight + foot.taperHeight / 2 - 0.1;
         taper.userData.type = 'raft';
         group.add(taper);
     });

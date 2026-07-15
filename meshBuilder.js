@@ -6,7 +6,83 @@
 
 import * as THREE from 'three';
 import { STLExporter } from 'three/addons/exporters/STLExporter.js';
-import { mergeGeometries } from 'three/addons/utils/BufferGeometryUtils.js';
+import { mergeGeometries, mergeVertices } from 'three/addons/utils/BufferGeometryUtils.js';
+
+// ── Support-geometry cleanup (Lychee repair-flag fix, 2026-07) ─────────
+// THREE primitives duplicate vertices along seams/caps so the viewer gets
+// sharp normals; exported raw they become unwelded triangle soup, and the
+// capsule lathe additionally emits zero-area quads at its poles. Lychee
+// welds on import and then reports the leftovers ("geometry needs repair":
+// thousands of sliver triangles + open edges on a perfectly printable
+// file). Weld each support primitive and drop degenerate triangles at
+// export time. The MODEL geometry is never touched — it ships repaired.
+const WELD_EPS = 1e-4;
+
+function cleanSupportGeometry(geo) {
+    // Normals force mergeVertices to keep seam duplicates apart (attributes
+    // must match to weld) — drop them; the STL exporter re-derives face
+    // normals and the viewer never sees this geometry.
+    geo.deleteAttribute('normal');
+    let g = mergeVertices(geo, WELD_EPS);
+    const idx = g.index;
+    if (!idx) return g;
+    const pos = g.attributes.position;
+    const keep = [];
+    const a = new THREE.Vector3(), b = new THREE.Vector3(), c = new THREE.Vector3();
+    const ab = new THREE.Vector3(), ac = new THREE.Vector3(), cr = new THREE.Vector3();
+    for (let t = 0; t < idx.count; t += 3) {
+        const i0 = idx.getX(t), i1 = idx.getX(t + 1), i2 = idx.getX(t + 2);
+        if (i0 === i1 || i1 === i2 || i0 === i2) continue;      // collapsed
+        a.fromBufferAttribute(pos, i0);
+        b.fromBufferAttribute(pos, i1);
+        c.fromBufferAttribute(pos, i2);
+        ab.subVectors(b, a);
+        ac.subVectors(c, a);
+        cr.crossVectors(ab, ac);
+        // area < ~5e-5 mm² — far below a resin printer pixel (~0.0025 mm²)
+        if (cr.lengthSq() < 1e-8) continue;                     // zero-area sliver
+        keep.push(i0, i1, i2);
+    }
+
+    // Orphan-islet filter: weld leftovers at sphere/lathe poles survive as
+    // 1-3 disconnected micro-triangles floating at the primitive's surface.
+    // A legitimate cap fan is CONNECTED to its body (same component), so
+    // dropping tiny disconnected components is safe.
+    const parent = new Map();
+    const find = (x) => {
+        let r = x;
+        while (parent.get(r) !== r) r = parent.get(r);
+        while (parent.get(x) !== r) { const n = parent.get(x); parent.set(x, r); x = n; }
+        return r;
+    };
+    const union = (x, y) => {
+        if (!parent.has(x)) parent.set(x, x);
+        if (!parent.has(y)) parent.set(y, y);
+        parent.set(find(x), find(y));
+    };
+    for (let t = 0; t < keep.length; t += 3) {
+        union(keep[t], keep[t + 1]);
+        union(keep[t], keep[t + 2]);
+    }
+    const triCount = new Map();
+    for (let t = 0; t < keep.length; t += 3) {
+        const r = find(keep[t]);
+        triCount.set(r, (triCount.get(r) ?? 0) + 1);
+    }
+    const filtered = [];
+    for (let t = 0; t < keep.length; t += 3) {
+        if (triCount.get(find(keep[t])) >= 8) {
+            filtered.push(keep[t], keep[t + 1], keep[t + 2]);
+        }
+    }
+
+    if (filtered.length !== idx.count) g.setIndex(filtered);
+    // mergeGeometries requires every input to carry the SAME attribute
+    // set — the model geos have normals, so re-derive them post-weld
+    // (STLExporter recomputes face normals anyway; these are inert).
+    g.computeVertexNormals();
+    return g;
+}
 
 // Y-up (Three.js) → Z-up (STL): rotate +90° around X (inverse of viewer's _zu which is -90°)
 const Y_UP_TO_Z_UP = new THREE.Matrix4().makeRotationX(Math.PI / 2);
@@ -120,7 +196,18 @@ function geometryToSTL(geometry) {
  */
 export function buildMergedSTLBuffer(modelGroup, supportGroup, upAxis = 'y') {
     const modelGeos = collectGeometries(modelGroup);
-    const supportGeos = collectGeometries(supportGroup);
+    const supportGeos = collectGeometries(supportGroup)
+        .map(cleanSupportGeometry)
+        .filter((g) => {
+            // Drop whole shells smaller than a resin pixel (~0.05mm): they
+            // print as nothing and only feed the slicer's repair counter
+            // (seen in the wild: 0.05mm joint micro-spheres).
+            if (!g.index || g.index.count === 0) return false;
+            g.computeBoundingBox();
+            const s = new THREE.Vector3();
+            g.boundingBox.getSize(s);
+            return Math.max(s.x, s.y, s.z) >= 0.15;
+        });
     const all = [...modelGeos, ...supportGeos];
     if (all.length === 0) {
         throw new Error('No geometry to export');
