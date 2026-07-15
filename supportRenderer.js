@@ -954,7 +954,13 @@ function renderTips(group, supports, columns, isER = false) {
         if (capsuleH < 0.01) return;
         approachDir.normalize();
 
-        const geo = buildTipCapsuleGeo(shaftR, tipR, capsuleH, _quality);
+        // Bite into the model: lengthen the capsule so the apex lands
+        // tip_penetration_mm PAST the contact point along the tip axis
+        // (per-support value from the engine presets; absent/0 = the old
+        // kiss-the-surface geometry, which peeled off under print load).
+        const penMM = Number(sp.tip_penetration_mm) || 0;
+
+        const geo = buildTipCapsuleGeo(shaftR, tipR, capsuleH + penMM, _quality);
         const capsule = new THREE.Mesh(geo, tipMat);
 
         // Position so bottom hemisphere is inside the column shaft.
