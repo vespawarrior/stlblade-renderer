@@ -399,11 +399,18 @@ function renderColumnsIndividual(group, cols, color, stype, isER = false, hostIn
         // Anchored columns: tapered frustum (thick at base, thin at contact)
         // path[0]=base (pillar/support end) → thick
         // path[-1]=contact (model surface) → thin
-        // Strategy/target beat the is_anchor flag: Phase 2 strips is_anchor
-        // from pillar_merge columns it passes through, which made them
-        // render as floating pencils with feet instead of merge cones.
-        if (col.is_anchor || col.strategy === 'pillar_merge'
-                || col.target_pillar_id != null) {
+        // Strategy/target beat the is_anchor flag — but ONLY for hanging
+        // merges. pillar_merge_extended columns legitimately reach the
+        // plate (path from z=0) with is_anchor=false: those are grounded
+        // pillars that also touch a host and must render as normal
+        // columns WITH a foot. A hanging merge (lowest point above the
+        // plate) missing its flag is Phase 2's flag-stripping; render it
+        // as the merge cone it really is.
+        let _lowestZ = Infinity;
+        for (const p of path) { if (p[2] < _lowestZ) _lowestZ = p[2]; }
+        const _mergeish = col.strategy === 'pillar_merge'
+            || col.target_pillar_id != null;
+        if (col.is_anchor || (_mergeish && _lowestZ > 1.5)) {
             const pts = path.map(p => zu(p[0], p[1], p[2]));
             // Host-snapping applies ONLY to pillar_merge anchors — they
             // exit a host column and the snap glues the exit point onto
@@ -846,11 +853,6 @@ function renderBaseFeet(group, columns, typeById, isER = false) {
     columns.forEach((col) => {
         if (col.is_anchor) return;  // Anchored columns have no base foot
         if (col.is_branch) return;  // Phase 2 branches start at junction, no foot
-        // Phase 2 strips is_anchor from pillar_merge columns it passes
-        // through — without this check they rendered as a floating pencil
-        // WITH a foot at z=87mm (0008 75mm). A merge hangs from a host
-        // pillar; it never has a foot.
-        if (col.strategy === 'pillar_merge' || col.target_pillar_id != null) return;
         const path = col.path;
         if (!path || path.length < 1) return;
         // Find lowest-Z point in path (base = build plate side)
