@@ -283,31 +283,43 @@ function renderColumnsInstanced(group, cols, color) {
     group.add(instancedMesh);
 }
 
-function renderColumnsIndividual(group, cols, color, stype, isER = false) {
+function renderColumnsIndividual(group, cols, color, stype, isER = false, hostIndex = null) {
     const mat = new THREE.MeshPhongMaterial({ color, transparent: true, opacity: 0.85 });
 
-    // ── Pre-pass: collect every non-anchor column's SEGMENTS (one per
-    //    consecutive waypoint pair) plus the column's shaft radius. The
-    //    anchor branch below snaps each anchor's pillar-side endpoint
-    //    (pts[0]) onto the closest column's SURFACE — measured against
-    //    the actual centerline polyline, not just the discrete
-    //    waypoints. STLBlade frequently places pts[0] at an interior
-    //    point of a column segment (where the smooth Catmull-Rom curve
-    //    passes through), not at a waypoint corner, so a
-    //    waypoint-nearest search would miss several anchors.
+    // ── Host segments for anchor snapping. `hostIndex` (built once in
+    //    renderColumns from ALL columns) carries {all, byId}: the anchor
+    //    branch snaps each merge's pillar-side endpoint onto its host
+    //    column's SURFACE — measured against the actual centerline
+    //    polyline, not just the discrete waypoints. Falling back to
+    //    group-local segments (legacy) is WRONG for cross-type merges: a
+    //    'light' merge whose host pillar is 'medium' didn't even have its
+    //    true host in the candidate set, so the nearest-hit heuristic
+    //    teleported it onto an unrelated pillar (0008 75mm: 6mm struts
+    //    drawn as long threads crossing the bow).
     const hostShaftLookup = isER ? ER_SHAFT_D : PRESET_SHAFT_D;
-    const hostShaftR = (hostShaftLookup[stype] || (isER ? 0.45 : 1.0)) * 0.5;
-    const hostSegments = []; // {a: Vector3, b: Vector3, radius}
-    for (const col of cols) {
-        if (col.is_anchor) continue;
-        const path = col.path;
-        if (!path || path.length < 2) continue;
-        const r =
-            (hostShaftLookup[stype] || col.base_diameter_mm ||
-                (isER ? 0.45 : 1.0)) * 0.5;
-        const pts = path.map(p => zu(p[0], p[1], p[2]));
-        for (let i = 0; i < pts.length - 1; i++) {
-            hostSegments.push({ a: pts[i], b: pts[i + 1], radius: r });
+    let hostSegments;
+    let hostSegmentsById;
+    if (hostIndex) {
+        hostSegments = hostIndex.all;
+        hostSegmentsById = hostIndex.byId;
+    } else {
+        hostSegments = [];
+        hostSegmentsById = new Map();
+        for (const col of cols) {
+            if (col.is_anchor) continue;
+            const path = col.path;
+            if (!path || path.length < 2) continue;
+            const r =
+                (hostShaftLookup[stype] || col.base_diameter_mm ||
+                    (isER ? 0.45 : 1.0)) * 0.5;
+            const pts = path.map(p => zu(p[0], p[1], p[2]));
+            const segs = [];
+            for (let i = 0; i < pts.length - 1; i++) {
+                const seg = { a: pts[i], b: pts[i + 1], radius: r };
+                hostSegments.push(seg);
+                segs.push(seg);
+            }
+            hostSegmentsById.set(col.support_id, segs);
         }
     }
 
@@ -317,12 +329,12 @@ function renderColumnsIndividual(group, cols, color, stype, isER = false) {
      * exist. Used both to pick which end of an anchor is the
      * column-side and to compute the surface snap.
      */
-    function nearestHostHit(p) {
-        if (hostSegments.length === 0) return null;
+    function nearestHostHit(p, segments = hostSegments) {
+        if (segments.length === 0) return null;
         let bestPt = null;
         let bestRadius = 0;
         let bestDist2 = Infinity;
-        for (const seg of hostSegments) {
+        for (const seg of segments) {
             const ab = new THREE.Vector3().subVectors(seg.b, seg.a);
             const ap = new THREE.Vector3().subVectors(p, seg.a);
             const denom = ab.lengthSq();
@@ -355,8 +367,8 @@ function renderColumnsIndividual(group, cols, color, stype, isER = false) {
      * ~2.3×) push it past 18 mm. Tighter bounds left anchors dangling
      * on the 75 mm rebake.
      */
-    function snapToHostSurface(endpoint, towards) {
-        const hit = nearestHostHit(endpoint);
+    function snapToHostSurface(endpoint, towards, segments = hostSegments) {
+        const hit = nearestHostHit(endpoint, segments);
         if (!hit) return endpoint;
         const slop = Math.max(hit.radius * 15, 25);
         if (Math.sqrt(hit.dist2) > slop) return endpoint;
@@ -387,7 +399,11 @@ function renderColumnsIndividual(group, cols, color, stype, isER = false) {
         // Anchored columns: tapered frustum (thick at base, thin at contact)
         // path[0]=base (pillar/support end) → thick
         // path[-1]=contact (model surface) → thin
-        if (col.is_anchor) {
+        // Strategy/target beat the is_anchor flag: Phase 2 strips is_anchor
+        // from pillar_merge columns it passes through, which made them
+        // render as floating pencils with feet instead of merge cones.
+        if (col.is_anchor || col.strategy === 'pillar_merge'
+                || col.target_pillar_id != null) {
             const pts = path.map(p => zu(p[0], p[1], p[2]));
             // Host-snapping applies ONLY to pillar_merge anchors — they
             // exit a host column and the snap glues the exit point onto
@@ -401,21 +417,35 @@ function renderColumnsIndividual(group, cols, color, stype, isER = false) {
             // STLBlade's documented convention is path[0]=column-side,
             // path[-1]=model-contact, but ~16% of anchors come out
             // flipped (model end at index 0). Pick whichever endpoint
-            // sits closer to a non-anchor column segment and snap THAT
-            // one — the other end stays put (it's the model contact).
+            // sits closer to a host segment and snap THAT one — the
+            // other end stays put (it's the model contact).
+            // TARGETED: when the schema names the host
+            // (target_pillar_id) the search runs over THAT pillar's
+            // segments only — the global nearest-hit picked unrelated
+            // pillars within the 25mm slop. GUARDED: a snap is a glue
+            // correction; if it would displace the endpoint further
+            // than the strut's own length, it's a teleport — revert.
             if (isPillarMerge && pts.length >= 2) {
-                const hitStart = nearestHostHit(pts[0]);
-                const hitEnd = nearestHostHit(pts[pts.length - 1]);
+                const targetSegs = col.target_pillar_id != null
+                    ? hostSegmentsById.get(col.target_pillar_id)
+                    : null;
+                const searchSegs = (targetSegs && targetSegs.length)
+                    ? targetSegs
+                    : hostSegments;
+                let strutLen = 0;
+                for (let j = 0; j < pts.length - 1; j++) {
+                    strutLen += pts[j].distanceTo(pts[j + 1]);
+                }
+                const hitStart = nearestHostHit(pts[0], searchSegs);
+                const hitEnd = nearestHostHit(pts[pts.length - 1], searchSegs);
                 const dStart = hitStart ? hitStart.dist2 : Infinity;
                 const dEnd = hitEnd ? hitEnd.dist2 : Infinity;
-                if (dStart <= dEnd) {
-                    pts[0] = snapToHostSurface(pts[0], pts[1]);
-                } else {
-                    const lastIdx = pts.length - 1;
-                    pts[lastIdx] = snapToHostSurface(
-                        pts[lastIdx],
-                        pts[lastIdx - 1],
-                    );
+                const snapIdx = dStart <= dEnd ? 0 : pts.length - 1;
+                const towards = snapIdx === 0 ? pts[1] : pts[pts.length - 2];
+                const before = pts[snapIdx].clone();
+                const snapped = snapToHostSurface(pts[snapIdx], towards, searchSegs);
+                if (snapped.distanceTo(before) <= Math.max(strutLen, 2.0)) {
+                    pts[snapIdx] = snapped;
                 }
             }
             let totalLen = 0;
@@ -655,6 +685,31 @@ function renderColumns(group, columns, supports, isER = false) {
     const treeColumns = columns.filter(c => c.tree_id != null && (c.is_trunk || c.is_branch));
     const legacyColumns = columns.filter(c => c.tree_id == null || (!c.is_trunk && !c.is_branch));
 
+    // ── Global host-segment index for anchor snapping ────────────────
+    // Built ONCE over ALL non-anchor columns (with per-column radius from
+    // its real type) and passed to every renderColumnsIndividual group.
+    // The old group-local collection meant a merge could only snap onto
+    // hosts of ITS OWN type — a 'light' merge with a 'medium' host pillar
+    // didn't even see it, and the nearest-hit heuristic teleported the
+    // endpoint onto an unrelated pillar within the 25mm slop.
+    const hostShaftLU = isER ? ER_SHAFT_D : PRESET_SHAFT_D;
+    const hostIndex = { all: [], byId: new Map() };
+    for (const col of columns) {
+        if (col.is_anchor) continue;
+        const path = col.path;
+        if (!path || path.length < 2) continue;
+        const st = typeById[col.support_id] || 'medium';
+        const r = (hostShaftLU[st] || col.base_diameter_mm || (isER ? 0.45 : 1.0)) * 0.5;
+        const pts = path.map(p => zu(p[0], p[1], p[2]));
+        const segs = [];
+        for (let i = 0; i < pts.length - 1; i++) {
+            const seg = { a: pts[i], b: pts[i + 1], radius: r };
+            hostIndex.all.push(seg);
+            segs.push(seg);
+        }
+        hostIndex.byId.set(col.support_id, segs);
+    }
+
     // Separate steep-approach columns (render in bright magenta — impossible to miss)
     const steepApproach = legacyColumns.filter(c => c.steep_approach);
     if (steepApproach.length > 0) {
@@ -667,7 +722,7 @@ function renderColumns(group, columns, supports, isER = false) {
             steepByType[st].push(col);
         });
         for (const [st, cols] of Object.entries(steepByType)) {
-            renderColumnsIndividual(group, cols, STEEP_COLOR, st, isER);
+            renderColumnsIndividual(group, cols, STEEP_COLOR, st, isER, hostIndex);
         }
     }
     const nonSteep = legacyColumns.filter(c => !c.steep_approach);
@@ -688,7 +743,7 @@ function renderColumns(group, columns, supports, isER = false) {
             mergeByType[st].push(col);
         });
         for (const [st, cols] of Object.entries(mergeByType)) {
-            renderColumnsIndividual(group, cols, PILLAR_MERGE_COLOR, st, isER);
+            renderColumnsIndividual(group, cols, PILLAR_MERGE_COLOR, st, isER, hostIndex);
         }
     }
 
@@ -704,7 +759,7 @@ function renderColumns(group, columns, supports, isER = false) {
             ohByType[st].push(col);
         });
         for (const [st, cols] of Object.entries(ohByType)) {
-            renderColumnsIndividual(group, cols, OVERHANG_COLOR, st, isER);
+            renderColumnsIndividual(group, cols, OVERHANG_COLOR, st, isER, hostIndex);
         }
     }
 
@@ -727,7 +782,7 @@ function renderColumns(group, columns, supports, isER = false) {
 
     for (const [stype, cols] of Object.entries(byType)) {
         const color = SUPPORT_TYPE_COLORS[stype] || 0x0088ff;
-        renderColumnsIndividual(group, cols, color, stype, isER);
+        renderColumnsIndividual(group, cols, color, stype, isER, hostIndex);
     }
 
     // Render intersecting columns in red, grouped by type for correct thickness
@@ -739,7 +794,7 @@ function renderColumns(group, columns, supports, isER = false) {
             intByType[st].push(col);
         });
         for (const [st, cols] of Object.entries(intByType)) {
-            renderColumnsIndividual(group, cols, INTERSECT_COLOR, st, isER);
+            renderColumnsIndividual(group, cols, INTERSECT_COLOR, st, isER, hostIndex);
         }
     }
 
@@ -791,6 +846,11 @@ function renderBaseFeet(group, columns, typeById, isER = false) {
     columns.forEach((col) => {
         if (col.is_anchor) return;  // Anchored columns have no base foot
         if (col.is_branch) return;  // Phase 2 branches start at junction, no foot
+        // Phase 2 strips is_anchor from pillar_merge columns it passes
+        // through — without this check they rendered as a floating pencil
+        // WITH a foot at z=87mm (0008 75mm). A merge hangs from a host
+        // pillar; it never has a foot.
+        if (col.strategy === 'pillar_merge' || col.target_pillar_id != null) return;
         const path = col.path;
         if (!path || path.length < 1) return;
         // Find lowest-Z point in path (base = build plate side)
@@ -798,6 +858,11 @@ function renderBaseFeet(group, columns, typeById, isER = false) {
         for (let i = 1; i < path.length; i++) {
             if (path[i][2] < bp[2]) bp = path[i];
         }
+        // Feet exist to weld the column to the RAFT — a "base" that isn't
+        // at plate level means the column hangs from something else
+        // (or from nothing: an engine bug upstream). Either way a
+        // floating foot is always wrong: skip it.
+        if (bp[2] > 1.5) return;
         const base = zu(bp[0], bp[1], bp[2]);
 
         // Use preset shaft diameter for consistent sizing per type
