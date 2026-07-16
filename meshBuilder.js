@@ -23,6 +23,18 @@ function cleanSupportGeometry(geo) {
     // must match to weld) — drop them; the STL exporter re-derives face
     // normals and the viewer never sees this geometry.
     geo.deleteAttribute('normal');
+    // Universal plate clamp: NO support geometry below the build plate
+    // (y=0 in the renderer's Y-up frame). Anything that dips below —
+    // junction spheres at low junctions, sphere caps at base joints —
+    // flattens onto the plate, which prints perfectly and keeps the
+    // slicer's auto-placement resting on the raft, not on a stray ball.
+    {
+        const p = geo.attributes.position;
+        for (let i = 0; i < p.count; i++) {
+            if (p.getY(i) < 0) p.setY(i, 0);
+        }
+        p.needsUpdate = true;
+    }
     let g = mergeVertices(geo, WELD_EPS);
     const idx = g.index;
     if (!idx) return g;
@@ -76,7 +88,78 @@ function cleanSupportGeometry(geo) {
         }
     }
 
-    if (filtered.length !== idx.count) g.setIndex(filtered);
+    // Final belt: FILL small boundary loops. Some builders still leak
+    // ~1mm open rings under specific path geometry; rather than chasing
+    // every source, cap any residual hole (≤64 edges) with a centroid
+    // fan. Orientation follows the boundary's winding so normals stay
+    // outward. Loops larger than 64 edges are left alone (they'd be a
+    // real modeling bug worth seeing, not silently hiding).
+    let finalIndex = filtered;
+    {
+        const dir = new Set();
+        for (let t = 0; t < filtered.length; t += 3) {
+            dir.add(filtered[t] + '_' + filtered[t + 1]);
+            dir.add(filtered[t + 1] + '_' + filtered[t + 2]);
+            dir.add(filtered[t + 2] + '_' + filtered[t]);
+        }
+        // Boundary edges (reverse direction = hole traversal). Grouped by
+        // vertex connectivity — no loop chaining, so NON-SIMPLE boundaries
+        // (figure-8s at weld-fused vertices) close too: fanning every
+        // boundary edge of a group to the group centroid gives each spoke
+        // an in/out pair (boundary vertices always balance), so nothing
+        // stays open.
+        const boundary = [];
+        for (const key of dir) {
+            const [a, b] = key.split('_').map(Number);
+            if (!dir.has(b + '_' + a)) boundary.push([b, a]);
+        }
+        const bParent = new Map();
+        const bFind = (x) => {
+            let r = x;
+            while (bParent.get(r) !== r) r = bParent.get(r);
+            while (bParent.get(x) !== r) { const n = bParent.get(x); bParent.set(x, r); x = n; }
+            return r;
+        };
+        const bUnion = (x, y) => {
+            if (!bParent.has(x)) bParent.set(x, x);
+            if (!bParent.has(y)) bParent.set(y, y);
+            bParent.set(bFind(x), bFind(y));
+        };
+        for (const [a, b] of boundary) bUnion(a, b);
+        const groups = new Map();
+        for (const [a, b] of boundary) {
+            const r = bFind(a);
+            if (!groups.has(r)) groups.set(r, []);
+            groups.get(r).push([a, b]);
+        }
+        const extraVerts = [];
+        const extraTris = [];
+        const baseCount = pos.count;
+        for (const edgesOfGroup of groups.values()) {
+            if (edgesOfGroup.length < 3 || edgesOfGroup.length > 200) continue;
+            const vertsOfGroup = new Set();
+            for (const [a, b] of edgesOfGroup) { vertsOfGroup.add(a); vertsOfGroup.add(b); }
+            const centroid = new THREE.Vector3();
+            for (const vi of vertsOfGroup) {
+                centroid.add(new THREE.Vector3().fromBufferAttribute(pos, vi));
+            }
+            centroid.multiplyScalar(1 / vertsOfGroup.size);
+            const ci = baseCount + extraVerts.length / 3;
+            extraVerts.push(centroid.x, centroid.y, centroid.z);
+            for (const [a, b] of edgesOfGroup) {
+                extraTris.push(a, b, ci);
+            }
+        }
+        if (extraTris.length) {
+            const merged = new Float32Array(pos.count * 3 + extraVerts.length);
+            merged.set(pos.array.subarray(0, pos.count * 3), 0);
+            merged.set(extraVerts, pos.count * 3);
+            g.setAttribute('position', new THREE.BufferAttribute(merged, 3));
+            finalIndex = filtered.concat(extraTris);
+        }
+    }
+
+    if (finalIndex.length !== idx.count) g.setIndex(finalIndex);
     // mergeGeometries requires every input to carry the SAME attribute
     // set — the model geos have normals, so re-derive them post-weld
     // (STLExporter recomputes face normals anyway; these are inert).

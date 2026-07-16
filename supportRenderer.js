@@ -431,8 +431,10 @@ function renderColumnsIndividual(group, cols, color, stype, isER = false) {
             let baseR = minBaseR + t * (maxBaseR - minBaseR);
             baseR = Math.min(baseR, totalLen / 8.0); // aspect ratio: diameter ≤ 1/4 of length
 
-            // Tip radius (contact end): tiny for clean surface contact
-            const anchorTipR = Math.min(0.08, baseR * 0.5);
+            // Tip radius (contact end): small for clean surface contact,
+            // FLOORED at 0.06 — sub-pixel cone tips crumble into open
+            // micro-rings after slicer-import welding (Lychee holes).
+            const anchorTipR = Math.max(0.06, Math.min(0.08, baseR * 0.5));
 
             const anchorMat = new THREE.MeshPhongMaterial({
                 color: ANCHOR_COLOR, transparent: true, opacity: 0.85,
@@ -472,12 +474,16 @@ function renderColumnsIndividual(group, cols, color, stype, isER = false) {
             Object.assign(baseSphere.userData, colMeta);
             group.add(baseSphere);
 
-            // Sphere cap at tip (contact end)
-            const tipSphere = new THREE.Mesh(buildSphereGeo(anchorTipR, _quality), anchorMat);
-            tipSphere.position.copy(pts[pts.length - 1]);
-            tipSphere.userData.type = 'columns';
-            Object.assign(tipSphere.userData, colMeta);
-            group.add(tipSphere);
+            // Sphere cap at tip (contact end) — only when it prints
+            // (sub-pixel micro-spheres just feed the slicer's repair
+            // counter; the cone is closed on its own).
+            if (anchorTipR >= 0.1) {
+                const tipSphere = new THREE.Mesh(buildSphereGeo(anchorTipR, _quality), anchorMat);
+                tipSphere.position.copy(pts[pts.length - 1]);
+                tipSphere.userData.type = 'columns';
+                Object.assign(tipSphere.userData, colMeta);
+                group.add(tipSphere);
+            }
 
             return;
         }
@@ -543,11 +549,24 @@ function renderColumnsIndividual(group, cols, color, stype, isER = false) {
             }
         } else {
             for (let si = 0; si < trimmedPts.length - 1; si++) {
-                const height = trimmedPts[si].distanceTo(trimmedPts[si + 1]);
+                let segEnd = trimmedPts[si + 1];
+                // Interior joints: extend 0.06mm into the next segment.
+                // Butt-joined segments share an EXACT cap disc; slicer
+                // imports weld those into open rings ("holes" in Lychee).
+                // A real overlap keeps each shell independently closed.
+                if (si < trimmedPts.length - 2) {
+                    const d = new THREE.Vector3()
+                        .subVectors(trimmedPts[si + 1], trimmedPts[si]);
+                    if (d.lengthSq() > 1e-12) {
+                        segEnd = trimmedPts[si + 1].clone()
+                            .add(d.normalize().multiplyScalar(0.06));
+                    }
+                }
+                const height = trimmedPts[si].distanceTo(segEnd);
                 if (height > 0.01) {
                     renderOneCylinder(
                         group,
-                        trimmedPts[si], trimmedPts[si + 1], height,
+                        trimmedPts[si], segEnd, height,
                         baseR, baseR, 0, 1, mat, colMeta,
                     );
                 }
@@ -599,8 +618,14 @@ function renderJunctionSpheres(group, trunks, color) {
         // Junction = last point of trunk path
         const junc = path[path.length - 1];
         const pos = zu(junc[0], junc[1], junc[2]);
-        // Sphere radius = actual trunk diameter (exact match with cylinder)
-        const sphereR = Math.max((col.base_diameter_mm || 1.0) * 0.5, 0.08);
+        // Sphere radius = actual trunk diameter (exact match with cylinder),
+        // CLAMPED to the junction height: a low junction (seen at z=0.57 on
+        // a d=3.0 trunk) otherwise pokes ~1mm BELOW the build plate — the
+        // slicer then rests the print on the ball instead of the raft.
+        const sphereR = Math.min(
+            Math.max((col.base_diameter_mm || 1.0) * 0.5, 0.08),
+            Math.max(pos.y, 0.08),
+        );
         const geo = buildSphereGeo(sphereR, _quality);
         const sphere = new THREE.Mesh(geo, mat);
         sphere.position.copy(pos);
