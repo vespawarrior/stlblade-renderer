@@ -71,22 +71,6 @@ export function buildTaperedTubeGeo(pts, radiusFn, quality = 'medium') {
     const q = resolveQuality(quality);
     const radialSegs = q.tubeRadialSegs;
 
-    // Engine paths arrive RDP-simplified (3-5 control points) since
-    // 2026-07-17 — rendering them raw looks angular ("hemos perdido el
-    // bezier"). Resample along a CENTRIPETAL Catmull-Rom: smooth curves
-    // back at ~1 ring/1.5mm, and centripetal parameterization does not
-    // overshoot at sharp control points (the uniform spline turned
-    // necessary doglegs into S-wiggles). 2-point paths stay straight.
-    if (pts.length >= 3) {
-        let rawLen = 0;
-        for (let i = 1; i < pts.length; i++) rawLen += pts[i - 1].distanceTo(pts[i]);
-        if (rawLen > 0.01) {
-            const curve = new THREE.CatmullRomCurve3(pts, false, 'centripetal');
-            const nSamples = Math.max(pts.length, Math.min(64, Math.ceil(rawLen / 1.5)));
-            pts = curve.getPoints(nSamples);
-        }
-    }
-
     // Compute cumulative lengths
     const cumLen = [0];
     for (let i = 1; i < pts.length; i++) {
