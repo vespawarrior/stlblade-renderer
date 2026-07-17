@@ -875,10 +875,15 @@ function renderBaseFeet(group, columns, typeById, isER = false) {
         if (bp[2] > 1.5) return;
         const base = zu(bp[0], bp[1], bp[2]);
 
-        // Use preset shaft diameter for consistent sizing per type
+        // Use preset shaft diameter for consistent sizing per type.
+        // base_diameter_mm wins when bigger (thickened columns) so the
+        // foot matches the fat shaft instead of pinching at the plate.
         const stype = (typeById && typeById[col.support_id]) || 'medium';
         const shaftLU = isER ? ER_SHAFT_D : PRESET_SHAFT_D;
-        const colRadius = (shaftLU[stype] || col.base_diameter_mm || (isER ? 0.45 : 1.0)) * 0.5;
+        const colRadius = Math.max(
+            shaftLU[stype] || (isER ? 0.45 : 1.0),
+            (!isER && col.base_diameter_mm) || 0,
+        ) * 0.5;
         const foot = buildBaseFootGeo(colRadius, _quality);
 
         const pad = new THREE.Mesh(foot.padGeo, footMat);
@@ -1003,11 +1008,18 @@ function renderTips(group, supports, columns, isER = false) {
         const isTipWarning = col && !col.intersects_mesh && col.tip_intersects_mesh;
         const tipMat = isIntersecting ? tipMatIntersect : (isTipWarning ? tipMatWarning : tipMatNormal);
 
-        // Use preset shaft diameter for consistent sizing per type
+        // Use preset shaft diameter for consistent sizing per type.
+        // The engine's base_diameter_mm WINS when bigger (long-column /
+        // merge thickening) — the tip capsule must taper from the FAT
+        // shaft down to the tip, otherwise the thick column ends flat
+        // with a skinny needle poking out (0008 bow columns, user-caught).
         const stype = sp.support_type || 'medium';
         const shaftLU = isER ? ER_SHAFT_D : PRESET_SHAFT_D;
         const tipLU = isER ? ER_TIP_D : PRESET_TIP_D;
-        const shaftR = (shaftLU[stype] || (isER ? 0.45 : 1.0)) * 0.5;
+        const shaftR = Math.max(
+            shaftLU[stype] || (isER ? 0.45 : 1.0),
+            (!isER && col && col.base_diameter_mm) || 0,
+        ) * 0.5;
         const tipR = (tipLU[stype] || (isER ? 0.20 : 0.2)) * 0.5;
         const contactPos = zu(sp.contact[0], sp.contact[1], sp.contact[2]);
 
