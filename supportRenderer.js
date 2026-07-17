@@ -392,6 +392,10 @@ function renderColumnsIndividual(group, cols, color, stype, isER = false, hostIn
             isTrunk: col.is_trunk,
             isBranch: col.is_branch,
             intersects: col.intersects_mesh,
+            // Problems-only shows the PILLAR of a flagged tip too — an
+            // orange cone floating alone among 400 columns is impossible
+            // to locate (user request, 2026-07-17).
+            tipWarning: !!col.tip_intersects_mesh && !col.intersects_mesh,
             source: col.source,
             supportType: stype,
         };
