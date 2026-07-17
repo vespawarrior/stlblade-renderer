@@ -525,10 +525,18 @@ function renderColumnsIndividual(group, cols, color, stype, isER = false, hostIn
             return;
         }
 
-        // Use preset shaft/tip diameters — Easy Remove uses thinner values
+        // Use preset shaft/tip diameters — Easy Remove uses thinner values.
+        // The engine's base_diameter_mm WINS when it exceeds the preset:
+        // the long-column/merge thickening passes upgrade the data field
+        // and the shipped shaft must match (legacy data smaller than the
+        // preset keeps the preset — those values were beam radii, not
+        // display diameters).
         const shaftLookup = isER ? ER_SHAFT_D : PRESET_SHAFT_D;
         const tipLookup = isER ? ER_TIP_D : PRESET_TIP_D;
-        const baseR = (shaftLookup[stype] || col.base_diameter_mm || (isER ? 0.45 : 1.0)) * 0.5;
+        const baseR = Math.max(
+            shaftLookup[stype] || (isER ? 0.45 : 1.0),
+            (!isER && col.base_diameter_mm) || 0,
+        ) * 0.5;
         const tipR = (tipLookup[stype] || col.tip_diameter_mm || (isER ? 0.20 : 0.4)) * 0.5;
         const tipReserveMM = isER ? ER_TIP_RESERVE_MM : TIP_RESERVE_MM;
 
