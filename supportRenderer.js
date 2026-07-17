@@ -585,7 +585,22 @@ function renderColumnsIndividual(group, cols, color, stype, isER = false, hostIn
         // mid-air. Per-segment cylinders pass through every waypoint by
         // construction, so the branches stay attached.
         const isPhase2Trunk = col.is_trunk && col.tree_id != null;
-        if (trimmedPts.length >= 3 && !isPhase2Trunk) {
+        // Sharp doglegs (>25° turn) render as per-segment cylinders — a
+        // clean elbow. Catmull-Rom smoothing wiggles them into S-shaped
+        // pillars (0008 sp.296, user-caught): the data jog is a needed
+        // route around geometry, but the spline overshoots both sides.
+        let hasSharpTurn = false;
+        for (let ti = 1; ti < trimmedPts.length - 1 && !hasSharpTurn; ti++) {
+            const v1 = new THREE.Vector3()
+                .subVectors(trimmedPts[ti], trimmedPts[ti - 1]);
+            const v2 = new THREE.Vector3()
+                .subVectors(trimmedPts[ti + 1], trimmedPts[ti]);
+            if (v1.lengthSq() < 1e-12 || v2.lengthSq() < 1e-12) continue;
+            if (v1.normalize().dot(v2.normalize()) < 0.9063) { // cos 25°
+                hasSharpTurn = true;
+            }
+        }
+        if (trimmedPts.length >= 3 && !isPhase2Trunk && !hasSharpTurn) {
             const tube = buildTaperedTube(trimmedPts, () => baseR, mat);
             if (tube) {
                 tube.userData.type = 'columns';
