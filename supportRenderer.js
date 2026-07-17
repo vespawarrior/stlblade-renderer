@@ -10,7 +10,7 @@ import {
     buildBaseFootGeo,
     buildRaftBeamGeo,
     buildBraceGeo,
-} from './supportGeometry.js';
+} from './supportGeometry.js?v=2';
 
 // ── Theme (per-app config via setTheme) ──────────────────────────────────
 // Colors + tip-reserve are per-app: STLCreator uses a pink theme, the engine
@@ -54,7 +54,7 @@ const ER_TIP_D = { light: 0.15, medium: 0.20 };
 let ER_TIP_RESERVE_MM = 1.5;
 
 // zu() is imported from supportGeometry.js and re-exported
-export { zu, QUALITY_PRESETS } from './supportGeometry.js';
+export { zu, QUALITY_PRESETS } from './supportGeometry.js?v=2';
 
 // Active quality preset — consumers can change before calling renderSupports
 let _quality = 'medium';
