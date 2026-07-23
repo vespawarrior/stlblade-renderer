@@ -398,6 +398,10 @@ function renderColumnsIndividual(group, cols, color, stype, isER = false, hostIn
             tipWarning: !!col.tip_intersects_mesh && !col.intersects_mesh,
             source: col.source,
             supportType: stype,
+            // Effective shaft Ø — the long-column upgrade can ship a
+            // thicker shaft than the type's nominal (light @ Ø1.8);
+            // the tooltip must say so or the fat column reads as a bug.
+            baseDiameter: col.base_diameter_mm,
         };
 
         // Anchored columns: tapered frustum (thick at base, thin at contact)
@@ -1042,9 +1046,15 @@ function renderTips(group, supports, columns, isER = false) {
         // Find where the column was cut (tipReserve distance from contact along path).
         // Walk backwards along the column path from contact end.
         let columnEndPos = null;
+        // Tip-zone centreline (cut point → raw waypoints → contact).
+        // The straight capsule chord ignores whatever the router dodged
+        // inside the tip zone — sp.94's cone punched clean through a
+        // hair strand its PATH curved around (user-caught, elf 0020).
+        let tipPts = null;
 
         if (col && col.path && col.path.length >= 2) {
             const pts = col.path.map(p => zu(p[0], p[1], p[2]));
+            const inner = [];  // waypoints strictly inside the tip zone
             let distFromContact = 0;
             for (let j = pts.length - 1; j >= 1; j--) {
                 const segLen = pts[j].distanceTo(pts[j - 1]);
@@ -1054,12 +1064,16 @@ function renderTips(group, supports, columns, isER = false) {
                     columnEndPos = pts[j].clone().lerp(pts[j - 1], t);
                     break;
                 }
+                if (j < pts.length - 1) inner.unshift(pts[j]);
                 distFromContact += segLen;
             }
             // If entire path < tipReserve, use base (first point)
             if (!columnEndPos) {
                 columnEndPos = pts[0].clone();
+                inner.length = 0;
+                for (let j = 1; j < pts.length - 1; j++) inner.push(pts[j]);
             }
+            tipPts = [columnEndPos.clone(), ...inner, pts[pts.length - 1].clone()];
         }
 
         // Fallback: straight down from contact
@@ -1079,6 +1093,63 @@ function renderTips(group, supports, columns, isER = false) {
         // (per-support value from the engine presets; absent/0 = the old
         // kiss-the-surface geometry, which peeled off under print load).
         const penMM = Number(sp.tip_penetration_mm) || 0;
+
+        // How far does the tip-zone path stray from the straight chord?
+        // Straight (≤0.05mm) keeps the exact lathe capsule; a CURVED tip
+        // zone gets a path-following tapered tube instead, so the drawn
+        // tip stays inside the corridor the router actually cleared.
+        let chordDev = 0;
+        if (tipPts && tipPts.length >= 3) {
+            const chord = new THREE.Vector3().subVectors(contactPos, tipPts[0]);
+            const cLen2 = Math.max(chord.lengthSq(), 1e-12);
+            for (let j = 1; j < tipPts.length - 1; j++) {
+                const rel = new THREE.Vector3().subVectors(tipPts[j], tipPts[0]);
+                const t = Math.max(0, Math.min(1, rel.dot(chord) / cLen2));
+                const onChord = tipPts[0].clone().add(chord.clone().multiplyScalar(t));
+                chordDev = Math.max(chordDev, onChord.distanceTo(tipPts[j]));
+            }
+        }
+
+        if (chordDev > 0.05) {
+            // Curved tip: taper shaftR→tipR along the real centreline,
+            // extend the apex by penMM along the final tangent (the bite),
+            // seal both ends with spheres (seam + apex).
+            const curvePts = tipPts.map(p => p.clone());
+            const lastDir = new THREE.Vector3()
+                .subVectors(curvePts[curvePts.length - 1], curvePts[curvePts.length - 2]);
+            if (penMM > 0 && lastDir.lengthSq() > 1e-12) {
+                curvePts.push(
+                    curvePts[curvePts.length - 1].clone()
+                        .add(lastDir.normalize().multiplyScalar(penMM))
+                );
+            }
+            const tubeGeo = buildTaperedTubeGeo(
+                curvePts, (t) => shaftR + (tipR - shaftR) * t, _quality);
+            if (tubeGeo) {
+                const meta = {
+                    type: 'tips', supportId: sp.id, source: sp.source,
+                    supportType: sp.support_type,
+                };
+                if (col) {
+                    meta.strategy = col.strategy;
+                    meta.tipWarning = !!isTipWarning;
+                    meta.intersects = !!isIntersecting;
+                }
+                const tube = new THREE.Mesh(tubeGeo, tipMat);
+                Object.assign(tube.userData, meta);
+                group.add(tube);
+                const seam = new THREE.Mesh(buildSphereGeo(shaftR, _quality), tipMat);
+                seam.position.copy(curvePts[0]);
+                Object.assign(seam.userData, meta);
+                group.add(seam);
+                const apex = new THREE.Mesh(
+                    buildSphereGeo(Math.max(tipR, 0.06), _quality), tipMat);
+                apex.position.copy(curvePts[curvePts.length - 1]);
+                Object.assign(apex.userData, meta);
+                group.add(apex);
+                return;
+            }
+        }
 
         const geo = buildTipCapsuleGeo(shaftR, tipR, capsuleH + penMM, _quality);
         const capsule = new THREE.Mesh(geo, tipMat);
