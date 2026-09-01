@@ -44,7 +44,14 @@ const TREE_TRUNK_BRIGHTNESS = 1.0;
 const TREE_BRANCH_BRIGHTNESS = 0.65;
 
 // Preset shaft/tip dimensions (must match presets.py) — geometry, NOT theme.
-const PRESET_SHAFT_D = { stub: 0.25, mini: 0.40, light: 1.00, medium: 1.30, heavy: 2.50 };
+// OJO: estos son los `shaft_lower_diameter_mm` de core/presets.py y hay que
+// moverlos CON ellos. Este fichero no lee los presets del motor — los repite —
+// y ademas es el que genera el STL que se imprime, no solo el dibujo del visor.
+// El 31-ago el light bajo a 0.85 en el motor y esta tabla se quedo en 1.00: como
+// el fuste se dibuja con `Math.max(preset, base_diameter_mm)`, el adelgazamiento
+// no llegaba a la pieza. Lo detecto el usuario viendo troncos (rama x 1.2 = 1.02)
+// mas gruesos que sus vecinos y con el tooltip diciendo "light".
+const PRESET_SHAFT_D = { stub: 0.25, mini: 0.40, light: 0.85, medium: 1.30, heavy: 2.50 };
 const PRESET_TIP_D = { stub: 0.10, mini: 0.12, light: 0.20, medium: 0.40, heavy: 0.60 };
 let TIP_RESERVE_MM = 3.0;  // Tip zone height — themeable (default 3.0; engine may set 4.5)
 
@@ -396,6 +403,10 @@ function renderColumnsIndividual(group, cols, color, stype, isER = false, hostIn
             // orange cone floating alone among 400 columns is impossible
             // to locate (user request, 2026-07-17).
             tipWarning: !!col.tip_intersects_mesh && !col.intersects_mesh,
+            // Aviso de PROXIMIDAD, distinto de atravesar (1-sep). El motor
+            // separa ahora los dos casos; antes ambos venian en el mismo flag.
+            tipClose: !!col.tip_too_close && !col.tip_intersects_mesh
+                      && !col.intersects_mesh,
             source: col.source,
             supportType: stype,
             // Effective shaft Ø — the long-column upgrade can ship a
@@ -663,7 +674,10 @@ function renderJunctionSpheres(group, trunks, color) {
         color,
         emissive: Math.floor(color * 0.2) & 0xfefefe,
     });
-    const SHAFT_D = { stub: 0.25, mini: 0.40, light: 1.00, medium: 1.30, heavy: 2.50 };
+    // TERCERA copia de la misma tabla (ver PRESET_SHAFT_D arriba). Esta dibuja
+    // los TRONCOS, que es donde el usuario noto el desfase. Mismo aviso: va con
+    // core/presets.py.
+    const SHAFT_D = { stub: 0.25, mini: 0.40, light: 0.85, medium: 1.30, heavy: 2.50 };
 
     trunks.forEach(col => {
         const path = col.path;
