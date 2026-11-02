@@ -52,7 +52,10 @@ const TREE_BRANCH_BRIGHTNESS = 0.65;
 // no llegaba a la pieza. Lo detecto el usuario viendo troncos (rama x 1.2 = 1.02)
 // mas gruesos que sus vecinos y con el tooltip diciendo "light".
 const PRESET_SHAFT_D = { stub: 0.25, mini: 0.40, light: 0.85, medium: 1.30, heavy: 2.50 };
-const PRESET_TIP_D = { stub: 0.10, mini: 0.12, light: 0.20, medium: 0.40, heavy: 0.60 };
+// Puntas mas gruesas (motor v0.26.0, 2-nov): stub 0.10->0.15, mini 0.12->0.18,
+// light 0.20->0.25, a peticion de la granja que imprime Grimdark. Va con
+// core/presets.py del motor.
+const PRESET_TIP_D = { stub: 0.15, mini: 0.18, light: 0.25, medium: 0.40, heavy: 0.60 };
 let TIP_RESERVE_MM = 3.0;  // Tip zone height — themeable (default 3.0; engine may set 4.5)
 
 // Easy Remove: much thinner supports (must match easy_remove/config.py) — geometry.
