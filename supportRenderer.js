@@ -701,6 +701,25 @@ function renderJunctionSpheres(group, trunks, color) {
         sphere.position.copy(pos);
         sphere.userData.type = 'columns';
         group.add(sphere);
+
+        // Knees: a trunk merged into a shared root (motor 0.27) leans from
+        // its vertical down to the fork. Per-segment cylinders leave a notch
+        // on the outside of that bend — a ball the size of the trunk fills it.
+        const kneeR = Math.max((col.base_diameter_mm || 1.0) * 0.5, 0.08);
+        for (let i = 1; i < path.length - 1; i++) {
+            const a = path[i - 1], b = path[i], c = path[i + 1];
+            const u = [b[0] - a[0], b[1] - a[1], b[2] - a[2]];
+            const v = [c[0] - b[0], c[1] - b[1], c[2] - b[2]];
+            const lu = Math.hypot(u[0], u[1], u[2]);
+            const lv = Math.hypot(v[0], v[1], v[2]);
+            if (lu < 1e-6 || lv < 1e-6) continue;
+            const cos = (u[0] * v[0] + u[1] * v[1] + u[2] * v[2]) / (lu * lv);
+            if (cos > 0.996) continue;  // straight (< ~5°): no notch to fill
+            const knee = new THREE.Mesh(buildSphereGeo(kneeR, _quality), mat);
+            knee.position.copy(zu(b[0], b[1], b[2]));
+            knee.userData.type = 'columns';
+            group.add(knee);
+        }
     });
 }
 
@@ -1278,6 +1297,11 @@ function renderRaftLattice(group, columns, fallbackBasePositions) {
             for (let i = 1; i < col.path.length; i++) {
                 if (col.path[i][2] < bp[2]) bp = col.path[i];
             }
+            // Same cut as renderBaseFeet: a column that doesn't reach the
+            // plate hangs from something else (a trunk merged into a shared
+            // root, motor 0.27) — no raft node, or the lattice would climb
+            // to it.
+            if (bp[2] > 1.5) return;
             bases.push(zu(bp[0], bp[1], bp[2]));
             basesSid.push(col.support_id);
         });
