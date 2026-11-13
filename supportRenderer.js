@@ -69,6 +69,10 @@ export { zu, QUALITY_PRESETS } from './supportGeometry.js?v=3';
 // Active quality preset — consumers can change before calling renderSupports
 let _quality = 'medium';
 let _isER = false;  // Set per render call — Easy Remove mode
+// Diametro de contacto de CADA punta (SupportPoint.tip_diameter_mm). El motor puede graduarlo
+// por zona (STLBLADE_TIP_BY_SPACING); sin eso manda el mismo valor que PRESET_TIP_D, asi que
+// por defecto el resultado no cambia.
+let _tipById = {};
 
 export function clearSupports(group) {
     while (group.children.length > 0) {
@@ -154,6 +158,8 @@ export function renderSupports(group, supports, columns, braces, raft, phase = '
     // Build support type lookup (used by multiple render functions)
     const typeById = {};
     if (supports) supports.forEach(sp => { typeById[sp.id] = sp.support_type || 'medium'; });
+    _tipById = {};
+    if (supports) supports.forEach(sp => { if (sp.tip_diameter_mm > 0) _tipById[sp.id] = sp.tip_diameter_mm; });
 
     const basePositions = [];
 
@@ -559,7 +565,7 @@ function renderColumnsIndividual(group, cols, color, stype, isER = false, hostIn
             shaftLookup[stype] || (isER ? 0.45 : 1.0),
             (!isER && col.base_diameter_mm) || 0,
         ) * 0.5;
-        const tipR = (tipLookup[stype] || col.tip_diameter_mm || (isER ? 0.20 : 0.4)) * 0.5;
+        const tipR = ((!isER && _tipById[col.support_id]) || tipLookup[stype] || col.tip_diameter_mm || (isER ? 0.20 : 0.4)) * 0.5;
         const tipReserveMM = isER ? ER_TIP_RESERVE_MM : TIP_RESERVE_MM;
 
         // Path convention: path[0]=base (Z≈0), path[-1]=contact (on model)
@@ -1064,7 +1070,7 @@ function renderTips(group, supports, columns, isER = false) {
             shaftLU[stype] || (isER ? 0.45 : 1.0),
             (!isER && col && col.base_diameter_mm) || 0,
         ) * 0.5;
-        const tipR = (tipLU[stype] || (isER ? 0.20 : 0.2)) * 0.5;
+        const tipR = ((!isER && sp.tip_diameter_mm > 0 && sp.tip_diameter_mm) || tipLU[stype] || (isER ? 0.20 : 0.2)) * 0.5;
         const contactPos = zu(sp.contact[0], sp.contact[1], sp.contact[2]);
 
         // tipReserve must match _renderColumnsIndividual.
