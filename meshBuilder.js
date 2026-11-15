@@ -167,6 +167,48 @@ function cleanSupportGeometry(geo) {
     return g;
 }
 
+// ── Shells that touch at an exact vertex (Lychee repair flag, 2026-11) ──
+// Each support primitive is its own closed shell, and overlapping shells
+// print fine. But two shells that share an EXACT vertex become one
+// non-manifold body once the slicer welds on import: the end caps of two
+// branch tubes that start at the same trunk junction share their centre
+// and the first rim vertex (both rings start at angle 0), so that spoke
+// edge ends up with 4 faces; two identical junction/knee spheres at the
+// same spot duplicate every face. Grimdark 0.36 (15-nov): 7-57 such
+// shells per mini, 68-118 edges with >2 faces, all at branch feet and
+// elbows; the model itself is clean. Lychee flags the file for repair.
+// Fix at export, whatever built the shells: drop exact duplicates and
+// nudge every other shell sideways by a few microns (5-20 µm: far below
+// a resin pixel, far above any weld tolerance). Sideways only, in the
+// plate plane (x/z in this Y-up frame): no foot leaves the plate.
+const NUDGE_MIN = 0.005;
+const NUDGE_SPAN = 0.015;
+const GOLDEN = 0.6180339887498949;
+
+function shellKey(g) {
+    const p = g.attributes.position;
+    let sx = 0, sy = 0, sz = 0;
+    for (let i = 0; i < p.count; i++) { sx += p.getX(i); sy += p.getY(i); sz += p.getZ(i); }
+    const r = (v) => Math.round(v * 1e4);
+    return `${p.count}:${g.index ? g.index.count : 0}:${r(sx / p.count)}:${r(sy / p.count)}:${r(sz / p.count)}`;
+}
+
+function separateSupportShells(geos) {
+    const seen = new Set();
+    const out = [];
+    for (const g of geos) {
+        const key = shellKey(g);
+        if (seen.has(key)) { g.dispose(); continue; }
+        seen.add(key);
+        const k = out.length;
+        const mag = NUDGE_MIN + NUDGE_SPAN * ((k * GOLDEN) % 1);
+        const ang = 2 * Math.PI * ((k * GOLDEN * GOLDEN) % 1);
+        g.translate(mag * Math.cos(ang), 0, mag * Math.sin(ang));
+        out.push(g);
+    }
+    return out;
+}
+
 // Y-up (Three.js) → Z-up (STL): rotate +90° around X (inverse of viewer's _zu which is -90°)
 const Y_UP_TO_Z_UP = new THREE.Matrix4().makeRotationX(Math.PI / 2);
 
@@ -291,7 +333,7 @@ export function buildMergedSTLBuffer(modelGroup, supportGroup, upAxis = 'y') {
             g.boundingBox.getSize(s);
             return Math.max(s.x, s.y, s.z) >= 0.15;
         });
-    const all = [...modelGeos, ...supportGeos];
+    const all = [...modelGeos, ...separateSupportShells(supportGeos)];
     if (all.length === 0) {
         throw new Error('No geometry to export');
     }

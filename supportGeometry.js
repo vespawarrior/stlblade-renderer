@@ -65,7 +65,28 @@ export function zu(x, y, z) {
  * @param {string|object} [quality='medium'] - quality preset name or object
  * @returns {THREE.BufferGeometry|null} - null if degenerate
  */
+// Minimum spacing between tube rings (mm). The engine bakes smooth curves
+// into dense polylines (130-160 points, 0.015-0.05 mm apart on Grimdark
+// 0.36 branches); with a ~0.4 mm radius, rings that close fold over each
+// other on the inner side of a bend and weld into edges shared by >2
+// faces — Lychee then flags the STL for repair. Skipping points closer
+// than this to the last kept one is invisible on a smooth curve.
+const MIN_RING_SPACING = 0.1;
+
+function thinPolyline(pts) {
+    if (pts.length <= 2) return pts;
+    const out = [pts[0]];
+    for (let i = 1; i < pts.length - 1; i++) {
+        if (pts[i].distanceTo(out[out.length - 1]) >= MIN_RING_SPACING) out.push(pts[i]);
+    }
+    const last = pts[pts.length - 1];
+    if (out.length > 1 && last.distanceTo(out[out.length - 1]) < MIN_RING_SPACING) out.pop();
+    out.push(last);
+    return out;
+}
+
 export function buildTaperedTubeGeo(pts, radiusFn, quality = 'medium') {
+    pts = thinPolyline(pts);
     if (pts.length < 2) return null;
 
     const q = resolveQuality(quality);
